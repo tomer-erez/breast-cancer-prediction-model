@@ -1,0 +1,172 @@
+---
+title: "tumor size and its classification"
+author: "Tomer Erez and Tal Sadot"
+date: '2022-05-17'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+loading data
+```{r reading the data, warning=FALSE, message=FALSE, eval=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(caret)
+theme_set(theme_bw())
+raw_data <-read.csv("data.csv", header=TRUE)
+```
+
+
+
+
+
+```{r}
+wisconsin_lr<-raw_data%>%select(diagnosis,radius_mean,texture_mean,perimeter_mean,compactness_mean)
+head(wisconsin_lr)
+# minimized data to diagnosis, and relevant measurements
+
+
+
+```
+
+
+
+
+```{r}
+wisconsin_lr$diagnosis<-ifelse(wisconsin_lr$diagnosis=="M",1,0)
+
+# malignant are 1s and benign are 0s
+head(wisconsin_lr)
+summary(wisconsin_lr)
+```
+
+
+
+
+```{r}
+sapply(wisconsin_lr, sd)
+
+wisconsin_lr$diagnosis <- as.factor(wisconsin_lr$diagnosis)
+
+mylogit <- glm(diagnosis ~ perimeter_mean+radius_mean+texture_mean+compactness_mean,data = wisconsin_lr, family = "binomial")
+
+summary(mylogit)
+# the median perimeter in our sample was 86, which is a very alarming tumor size, which explains why that stat is not useful (very high p-value)
+# texture is a good predictor
+
+```
+
+
+
+
+```{r}
+ll.null<-mylogit$null.deviance/-2
+ll.proposed<-mylogit$deviance/-2
+R_squared=(ll.null-ll.proposed)/ll.null
+R_squared
+# overall effect size, R squared, is 0.7198957
+```
+
+
+
+```{r}
+predicted.data<-data.frame(
+  probability.of.Malignancy=mylogit$fitted.values,
+  M_rate=wisconsin_lr$diagnosis)
+predicted.data<-predicted.data[
+  +order(predicted.data$probability.of.Malignancy,decreasing = FALSE),]
+predicted.data$rank<-1:nrow(predicted.data)
+library(cowplot)
+ggplot(data=predicted.data,aes(x=rank,y=probability.of.Malignancy))+
+  geom_point(aes(color=M_rate),alpha=1,shape=4,stroke=2)+
+  xlab("Index")+
+  ylab("predicted probability of a tumor being malignant")
+ggsave("malignant_tumor_probabilities.pdf")
+
+
+```
+
+
+
+
+Hypothsis test:
+H0: expectancy of perimeter mean within malignant tumors equals perimeter mean within benign.
+H1: expectancy of perimeter mean within malignant tumors is greater than perimeter mean within benign.
+
+
+
+
+
+```{r}
+
+#read
+wisconsin_ht<-raw_data%>%select(diagnosis,perimeter_mean)
+
+wisconsin_ht$diagnosis <- as.factor(wisconsin_ht$diagnosis)
+
+
+```
+
+
+
+
+```{r}
+
+ggplot(wisconsin_ht, aes(perimeter_mean)) + 
+  geom_density(aes(data = perimeter_mean, fill = diagnosis), position = 'identity', alpha = 0.5) +
+  labs(x = 'perimeter_mean', y = 'Density') + scale_fill_discrete(name = 'diagnosis') + scale_x_continuous(limits = c(0, 200))
+
+```
+```{r}
+library(hrbrthemes)
+library(viridis)
+
+bp <- ggplot(wisconsin_ht,aes(x=diagnosis,y=perimeter_mean,color="diagnosis",fill=diagnosis)) + 
+  geom_boxplot()+
+    scale_fill_viridis(discrete = TRUE, alpha=0.6, option="A") +
+    theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)
+    ) +
+    ggtitle("Basic boxplot") +
+    xlab("")
+bp
+
+```
+
+
+```{r}
+
+
+t.test(formula=perimeter_mean~diagnosis,data=wisconsin_ht,alternative="less")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
