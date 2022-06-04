@@ -1,0 +1,583 @@
+---
+title: "Breast cancer prediction model"
+author: "Tomer Erez and Tal Sadot"
+date: "May 2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+<style type="text/css">
+  body{
+  font-size: 14pt;
+}
+</style>
+<body style="background-color:Ivory;">
+
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+```
+
+## {.tabset}
+
+### Introduction
+
+>
+#### <span style="color: blue;"> "All models are wrong but some are useful"
+> -statistician, George E. P. Box.</shalom>
+
+
+In this article, We analyze the (https://www.kaggle.com/datasets/uciml/breast-cancer-wisconsin-data) data set of breast cancer tumors.
+
+In this data, we have cell measurements from 569 females whose diagnosis we know in advance.
+Features are computed from a digitized image of a fine needle aspirate (FNA) of a breast mass.
+FNA is a biopsy in which a needle removes a suspicious area from the breast and is checked for cancer cells
+They describe characteristics of the cell nuclei present in the image.
+The data was collected in order to develop methods to diagnose the cancer type. 
+
+
+Our goal is to apply Machine learning methods and predict whether a given tumor is malignant or benign.
+later on we will determine if there is a size difference between malignant and benign tumors.
+
+
+
+Breast cancer is cancer that forms in the cells of the breasts.
+Substantial support for breast cancer awareness and research funding has helped advancing the diagnosis and treatment of breast cancer.
+Breast cancer survival rates have increased, and the number of deaths associated with this disease is steadily declining, largely due to factors such as earlier detection, a new personalized approach to treatment and a better understanding of the disease.
+After skin cancer, breast cancer is the most common cancer diagnosed in women around the United States, which is a big reason we wanted to study the topic.
+It is very important for women to take imaging of their chest starting in their 30's as the disease is very common.
+
+There is no single test that can accurately diagnose cancer. The complete evaluation of a patient usually requires a thorough history and physical examination along with diagnostic testing.
+Many tests are needed to determine whether a person has cancer, or if another condition (such as an infection) is mimicking the symptoms of cancer.
+
+
+we studied the characteristics and provided our analysis based on the data the FNA provided.
+
+
+#### <span style="color: blue;"><u>**Libraries**</u></shalom>
+```{r packages,include=TRUE,warning=FALSE,message=FALSE, class.source="bg-danger",class.output="bg-success"}
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(cowplot)
+library(hrbrthemes)
+library(viridis)
+library(oddsratio)
+library(janitor)
+library(corrplot)
+library(caret)
+library(InformationValue)
+library(ISLR)
+library(cvms)
+library(ROCR)
+library(tibble)
+library(patchwork)
+library(lattice)
+library(pROC)
+```
+
+
+#### <span style="color: blue;"><u>**Loading data**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+
+raw_data <-read.csv("https://github.com/tomer-erez/breast-cancer-prediction-model/raw/main/data.csv", header=TRUE)
+nrow(raw_data)
+glimpse(raw_data) 
+#omit NA
+raw_data = raw_data[-33]
+#find number of rows with missing data
+sum(!complete.cases(raw_data))
+#number of benign tumors
+sum(raw_data$diagnosis == "B", na.rm=TRUE)
+#number of malignant tumors
+sum(raw_data$diagnosis == "M", na.rm=TRUE)
+#total number of observations
+nrow(raw_data)
+```
+
+
+#### <span style="color: blue;"><u>**Pearson correlation**</u></shalom>
+```{r fig.width=8, fig.height=8, correlation, class.source="bg-danger"}
+nc=ncol(raw_data)
+df <- raw_data[,3:nc-1]
+df$diagnosis <- as.integer(factor(df$diagnosis))-1
+correlations <- cor(df,method="pearson")
+corrplot(correlations, number.cex = .9, method = "square", 
+         hclust.method = "ward", order = "FPC",
+         type = "full", tl.cex=0.8,tl.col = "black")
+```
+
+
+Let's explore the correlation between the features using `cor` function for `Pearson` correlation,
+as we are trying to develop a model that will rely on multiple uncorrelated parameters.
+
+The highest correlations are between:  
+
+* perimeter_mean and radius_worst;  
+* area_worst and radius_worst;  
+* perimeter_worst and radius_worst, perimeter_mean, area_worst, area_mean, radius_mean;  
+* texture_mean and texture_worst; 
+
+'symmetry', 'texture', 'concavity_mean' and 'perimeter' have low correlation so we will explore those in our model.
+
+
+
+
+
+
+
+### Logistic regression
+
+The reason we chose a logistic regression model rather than a linear one is that a linear regression model provides correlation between continuous  variables and a continuous result.
+our model explores how tumor's features(continuous) effect the Classification  of the tumor(malignant or benign).
+further explanations on logistic transformation under the logistic regression table.
+
+
+Over fitting a model is a condition where a statistical model begins to describe the random error in the data rather than the relationships between variables. This problem occurs when the model is too complex. In regression analysis, over fitting can produce misleading R-squared values, regression coefficients, and p-values. 
+
+Over fit regression models have too many terms for the number of observations.
+When this occurs, the regression coefficients represent the noise rather than the genuine relationships in the population.
+
+hence we will use 4 data parameters, which are relatively uncorrelated according to the pearson correlation table.
+
+the parameters are: perimeter_mean,symmetry_mean,texture_mean,concavity_mean.
+
+Texture mean is the standard deviation of gray-scale values.
+perimeter mean is mean size of the core tumor.
+concavity mean is mean of severity of concave portions of the contour.
+symmetry means symmetry grade of the tumor.
+
+
+
+
+#### <span style="color: blue;"><u>**showing the data**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+wisconsin_LR<-raw_data%>%select(diagnosis,perimeter_mean,symmetry_mean,texture_mean,concavity_mean)
+head(wisconsin_LR)
+wisconsin_LR$diagnosis = factor(wisconsin_LR$diagnosis,levels = c('B', 'M'), labels = c(0, 1))
+#swap malignant diagnosis with "1", benign with "0", encoding the target as factor
+wisconsin_LR$symmetry_mean=wisconsin_LR$symmetry_mean*100
+wisconsin_LR$concavity_mean=wisconsin_LR$concavity_mean*100
+#normalize column values
+head(wisconsin_LR)
+```
+
+#### <span style="color: blue;"><u>**Logistic regression model**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+wisconsin_LR=wisconsin_LR[order(wisconsin_LR$perimeter_mean,decreasing = FALSE),]
+wisconsin_LR$diagnosis<-as.factor(wisconsin_LR$diagnosis)
+
+mylogit <- glm(diagnosis ~perimeter_mean+symmetry_mean+texture_mean+concavity_mean ,data = wisconsin_LR, family = "binomial")
+
+summary(mylogit)
+
+```
+
+all of the beta coefficients have a p value lower than alpha, 0.05, meaning they are statistically significant.
+
+the equation that the model has built is of the form: p(y=malignant|X)=e to the exponent of the logistic model.
+
+![](https://user-images.githubusercontent.com/104759975/172027017-7bc3fa6e-de04-4356-a01d-f58b1a20c662.jpeg)
+
+#### <span style="color: blue;"><u>**Odds ratio table**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+exp(coef(mylogit)[-1])
+
+```
+
+
+we can see texture and symmetry correlate stronger with malignancy form the table.
+a rise in 1 unit tested (times 100 because we factored the column values) in symmetry mean suggests the likelihood of the tumor being malignant
+rises by a factor of 1.35, and the same logic applies for the other features.
+
+
+
+
+#### <span style="color: blue;"><u>**McFadden R-squared**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+ll.null<-mylogit$null.deviance/-2
+ll.proposed<-mylogit$deviance/-2
+R_squared=(ll.null-ll.proposed)/ll.null
+R_squared
+```
+
+
+overall effect size, R squared, is 0.7531155, suggests that the model explains the residuals very well:
+
+Assessing Model Fit:
+
+In typical linear regression, we use R2 as a way to assess how well a model fits the data. This number ranges from 0 to 1, with higher values indicating better model fit.
+
+However, there is no such R2 value for logistic regression. Instead, we can compute a metric known as McFadden’s R2, which ranges from 0 to just under 1. Values close to 0 indicate that the model has no predictive power. In practice, values over 0.40 indicate that a model fits the data very well.
+
+We can compute McFadden’s R2 for our model using the pR2 function from the pscl package:
+
+pscl::pR2(model)["McFadden"]
+
+ McFadden 
+0.7531155 
+A value of 0.7531155 is quite high for McFadden’s R2, which indicates that our model fits the data very well and has high predictive power.
+
+
+
+
+#### <span style="color: blue;"><u>**Prediction curve**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+predicted.data<-data.frame(
+  probability.of.Malignancy=mylogit$fitted.values,
+  M_rate=wisconsin_LR$diagnosis)
+predicted.data<-predicted.data[
+  +order(predicted.data$probability.of.Malignancy,decreasing = FALSE),]
+predicted.data$rank<-1:nrow(predicted.data)
+ggplot(data=predicted.data,aes(x=wisconsin_LR$perimeter_mean,y=probability.of.Malignancy))+
+  geom_point(aes(color=M_rate),alpha=1,shape=4,stroke=2)+
+  xlab("Perimeter mean")+
+  ylab("predicted probability of a tumor being malignant")
+
+
+
+
+```
+
+
+our model seems to predict diagnosis at a solid level.
+most malignant tumors are in the top right corner of the graph, which means our model estimates a high likelihood of those being malignant.
+and vice versa for benign tumors.
+
+
+
+
+
+#### <span style="color: blue;"><u>**Confusion matrix**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+
+wisconsin_LR$d.m <- factor(wisconsin_LR$diagnosis)
+
+inTrain <- createDataPartition(y = wisconsin_LR$d.m, p = 0.5, list = FALSE)
+
+training <- wisconsin_LR[inTrain,]
+testing <- wisconsin_LR[-inTrain,]
+
+
+wis.prob = predict(mylogit, testing, type="response")
+wis.pred = rep(0, dim(training)[1])
+
+
+# from now on EVERY tumor that our model estimates as more than 50% of being malignant, will be considered malignant!
+wis.pred[wis.prob > .5] = 1
+
+pred_table<-table(wis.pred, training$d.m)
+
+
+
+ctable <- as.table(matrix(c(pred_table[1], pred_table[3], pred_table[2], pred_table[4]), nrow = 2, byrow = TRUE))
+
+confusionMatrix(training$d.m, wis.pred)
+
+actual_diagnosis <- factor(c(1,1, 0, 0))
+model_diagnosis <- factor(c(0, 1, 0, 1))
+Y      <- c(pred_table[3], pred_table[1], pred_table[4], pred_table[2])
+df <- data.frame(actual_diagnosis, model_diagnosis, Y)
+
+ggplot(data =  df, mapping = aes(x = actual_diagnosis, y = model_diagnosis)) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = 1) +
+  scale_fill_gradient(low = "yellow", high = "red") +
+  theme_bw() + theme(legend.position = "none")+ ggtitle("threshold for malignancy-0.5 rate")
+```
+
+
+A confusion matrix is a technique for summarizing the performance of a classification algorithm.
+as we can see our predictions were mostly accurate both for TRUE NEGATIVE (benign, bottom left) and TRUE POSITIVE (malignant, top right).
+unfortunately, we do have some false positives(top left) and false negatives(bottom right).
+
+A threshold of a logistic regression model is the minimal predicting probability value that will be classified as 1, in our case "M".
+
+if we were to lower the threshold,
+we would be much more susceptible for a FALSE positive- diagnosing as malignant while actually the tumor is benign.
+opposite logic applies for setting a high threshold.
+
+we will show the two examples:
+
+```{r,include=FALSE}
+wisconsin_LR$d.m <- factor(wisconsin_LR$diagnosis)
+
+HTrain <- createDataPartition(y = wisconsin_LR$d.m, p = 0.5, list = FALSE)
+Htraining <- wisconsin_LR[HTrain,]
+Htesting <- wisconsin_LR[-HTrain,]
+Hwis.prob = predict(mylogit, testing, type="response")
+Hwis.pred = rep(0, dim(training)[1])
+Hwis.pred[wis.prob > .9] = 1
+Hpred_table<-table(Hwis.pred, training$d.m)
+Hctable <- as.table(matrix(c(Hpred_table[1], Hpred_table[3], Hpred_table[2], Hpred_table[4]), nrow = 2, byrow = TRUE))
+Actual_H <- factor(c(1, 1, 0, 0))
+predict_H <- factor(c(0, 1, 0, 1))
+HY      <- c(Hpred_table[3], Hpred_table[1], Hpred_table[4], Hpred_table[2])
+Hdf <- data.frame(Actual_H, predict_H, HY)
+g1=ggplot(data =  Hdf, mapping = aes(x = Actual_H, y = predict_H)) +
+  geom_tile(aes(fill = HY), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", HY)), vjust = 1) +
+  scale_fill_gradient(low = "yellow", high = "red") +
+  theme_bw() + theme(legend.position = "none")+ ggtitle("threshold for malignancy-0.9 rate")
+
+LTrain <- createDataPartition(y = wisconsin_LR$d.m, p = 0.5, list = FALSE)
+Ltraining <- wisconsin_LR[LTrain,]
+Ltesting <- wisconsin_LR[-LTrain,]
+Lwis.prob = predict(mylogit, testing, type="response")
+Lwis.pred = rep(0, dim(training)[1])
+Lwis.pred[wis.prob > .1] = 1
+Lpred_table<-table(Lwis.pred, training$d.m)
+Lctable <- as.table(matrix(c(Lpred_table[1], Lpred_table[3], Lpred_table[2], Lpred_table[4]), nrow = 2, byrow = TRUE))
+actual_L <- factor(c(1, 1, 0, 0))
+predict_L <- factor(c(0, 1, 0, 1))
+LY      <- c(Lpred_table[3], Lpred_table[1], Lpred_table[4], Lpred_table[2])
+Ldf <- data.frame(actual_L, predict_L, LY)
+g2=ggplot(data =  Ldf, mapping = aes(x = actual_L, y = predict_L)) +
+  geom_tile(aes(fill = LY), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", LY)), vjust = 1) +
+  scale_fill_gradient(low = "yellow", high = "red") +
+  theme_bw() + theme(legend.position = "none")+ ggtitle("threshold for malignancy-0.1 rate")
+```
+
+```{r plot together}
+(g2+g1)
+```
+
+
+as we can tell by lowering the threshold, we have more false positives, predicting positive("M") while the tumor is negative("B").
+and by raising the threshold, we have more false negatives, predicting negative("B") while the tumor is positive("M").
+malignant tumors have dodged our model and were predicted to be benign.
+
+
+
+**now back to our original model where the threshold is 0.5**
+
+
+#### <span style="color: blue;"><u>**Model success rate**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+
+mean(wis.pred == training$d.m)
+```
+
+
+success rate of 0.8-0.85, depends on the random picking of data, representing an error rate of about 20-15%, and is therefore much more accurate than random guessing.
+
+#### <span style="color: blue;"><u>**ROC curve**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+
+wis.pred=wis.pred[-285]
+pred <- prediction(wis.pred, testing$diagnosis)
+roc = performance(pred,"tpr","fpr")
+plot(roc, colorize = T, lwd = 4)
+abline(a = 0, b = 1) 
+
+```
+
+
+The ROC graph is perhaps the most important test of our logistic regression model.
+An ROC curve (receiver operating characteristic curve) is a graph showing the performance of a classification model at all classification thresholds.
+The Y axis represents the likelihood of a True Positive(malignancy) and the X axis is the False Positivist(benign diagnosed as malignant).
+An ROC curve plots TPR vs. FPR at different classification thresholds. Lowering the classification threshold classifies more items as positive, thus increasing both False Positives and True Positives
+
+
+#### <span style="color: blue;"><u>**AUC curve**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success",warning=FALSE}
+pROC_obj <- roc(testing$diagnosis,wis.pred,
+            smoothed = TRUE,
+            # arguments for ci
+            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+            # arguments for plot
+            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+            print.auc=TRUE, show.thres=TRUE)
+
+sens.ci <- ci.se(pROC_obj)
+plot(sens.ci, type="shape", col="lightblue")
+plot(sens.ci, type="bars")
+
+```
+
+
+
+
+AUC measures the entire two-dimensional area underneath the entire ROC curve (think integral calculus) from (0,0) to (1,1).
+AUC provides an aggregate measure of performance across all possible classification thresholds. 
+One way of interpreting AUC is as the probability that the model ranks a random positive example more highly than a random negative example.
+This is an ideal situation. When two curves don’t overlap at all that means the model has an ideal measure of separability. 
+It is perfectly able to distinguish between positive class and negative class.
+so our goal was to maximize the AUC under this ROC graph ,which worked out pretty well as our AUC is bigger than 0.9
+which is very close to the maximum area of 1.0.
+
+
+
+
+
+
+### Hypothsis test
+
+Our goal in this tab is tho determine whether malignant tumors are bigger than benign ones,
+which would help understanding the characteristics of a tumor.
+
+
+#### <span style="color: blue;"><u>**Statistical hypothesis testing**</u></shalom>
+
+H0: mean of perimeter within malignant tumors equals perimeter within benign.
+
+H1: mean of perimeter within malignant tumors is greater than perimeter within benign.
+
+
+
+
+#### <span style="color: blue;"><u>**Showing perimeter mean**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+
+
+wisconsin_HT<-raw_data%>%select(diagnosis,perimeter_mean)
+
+wisconsin_HT$diagnosis <- as.factor(wisconsin_HT$diagnosis)
+
+head(wisconsin_HT)
+```
+
+
+```{r,include=FALSE, class.source="bg-danger",class.output="bg-success"}
+
+p1 <- ggplot(wisconsin_LR, aes(x=perimeter_mean, fill=diagnosis)) +
+geom_density(alpha=0.4) +
+theme(legend.position = "none")
+p2 <- ggplot(wisconsin_LR, aes(x=symmetry_mean, fill=diagnosis)) +
+geom_density(alpha=0.4) +
+theme(legend.position = "none")
+p3 <- ggplot(wisconsin_LR, aes(x=texture_mean, fill=diagnosis)) +
+geom_density(alpha=0.4) +
+theme(legend.position = "none")
+p4 <- ggplot(wisconsin_LR, aes(x=concavity_mean, fill=diagnosis)) +
+geom_density(alpha=0.4) +
+theme(legend.position = "none")
+
+
+```
+
+#### <span style="color: blue;"><u>**data features distribution**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+(p1|p2)/(p3|p4)
+
+```
+
+
+#### <span style="color: blue;"><u>**analyzing symmetry differences between malignant and benign tumors**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+b_s=wisconsin_LR%>%filter(diagnosis==0)%>%select(symmetry_mean)
+m_s=wisconsin_LR%>%filter(diagnosis==1)%>%select(symmetry_mean)
+m_s=unlist(m_s)
+b_s=unlist(b_s)
+shapiro.test(m_s)
+shapiro.test(b_s)
+```
+
+
+Neither symmetry means of benign nor malignant tumors distribute normally according to "Wilk Shapiro test".
+
+
+#### <span style="color: blue;"><u>**Shapiro test to understand whether perimeter mean distributes normally in our data**</u></shalom>
+
+```{r class.source="bg-danger",class.output="bg-success"}
+b=wisconsin_HT%>%filter(diagnosis=="B")%>%select(perimeter_mean)
+m=wisconsin_HT%>%filter(diagnosis=="M")%>%select(perimeter_mean)
+m=unlist(m)
+b=unlist(b)
+shapiro.test(m)
+shapiro.test(b)
+
+```
+
+
+benign tumors clearly are normally distributed as p-value is bigger than alpha,
+unlike malignant tumors, whose perimeter does not distribute normally.
+
+
+#### <span style="color: blue;"><u>**Analyzing perimeter mean differences between malignant and benign tumors**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+ggplot(wisconsin_LR, aes(perimeter_mean)) + 
+  geom_density(aes(data = perimeter_mean, fill = diagnosis), position = 'identity', alpha = 0.5) +
+  labs(x = 'perimeter_mean', y = 'Density') + scale_fill_discrete(name = 'diagnosis') + scale_x_continuous(limits = c(0, 200))
+```
+
+
+
+
+#### <span style="color: blue;"><u>**Analyzing perimeter differences between malignant and benign tumors:**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+
+
+t.test(formula=perimeter_mean~diagnosis,data=wisconsin_HT,alternative="less")
+
+
+
+
+```
+
+
+malignant tumors are larger the benign ones, at a confidence level of 95%.
+
+#### <span style="color: blue;"><u>**classified sizes curve**</u></shalom>
+```{r class.source="bg-danger",class.output="bg-success"}
+ggplot(data = raw_data, 
+       aes(x = radius_mean, y = perimeter_mean, color = diagnosis)) +
+  geom_point() +
+  geom_hline(yintercept = 116.0, linetype = 'dashed', color = 'gray')+
+  geom_vline(xintercept = 18.00, linetype = 'dashed', color = 'gray')+
+  labs(title = 'Mean Perimeter and Mean Radius',
+       subtitle = 'Malignant lumps can get relatively bigger than benigns',
+       caption = 'Data owned by the University of Wisconsin',
+       x = 'Mean Radius', y = 'Mean Perimeter') +
+  annotate('text', x = 24, y = 150, 
+           label = '45% of malignants are bigger than all benigns',
+           size = 3, angle = 38)
+
+```
+
+
+Malignant lumps can get relatively bigger than benign lumps. This has the possibility of sparking up a hypothesis that malignant lumps begin as benigns. The data as it stands has no time variable hence that would be difficult to establish with what we have. However, bigger lumps are more likely to be malignants.
+
+
+
+
+
+
+
+
+### Summary and conclusions
+
+![All in good spirits!](https://user-images.githubusercontent.com/104759975/172027006-02162d22-a775-4698-aaa7-599479f790d2.jpeg)
+
+
+In this article we developed a logistic regression model which appears effective in predicting malignancy of a tumor.
+we practiced the model on half of our data and then used it to predict the second half's diagnosis.
+
+Shortly, we tried to show importance of feature selection and data visualization. Default data includes 33 feature,
+but after feature selection we drop this number from 33 to 5.
+
+
+then we studied the difference in sizes and variances of different cancerous cell nuclei.
+we were able to show that malignant tumors nuclei is much larger than a benign.
+
+We hope you enjoyed this article.
+If you have any question or advise on how to improve our model, We would appreciate to hear back from you(linkedin below)...
+
+
+#### <span style="color: blue;"><u>**about us**</u></shalom>
+We are Tomer Erez and Tal Sadot, students in "Tel Aviv University",
+studying in a program called "Digital sciences for High-Tech",
+and you can find more of our work in the following links:
+
+(https://www.linkedin.com/in/tomer-erez/),
+
+(https://github.com/tomer-erez),
+
+(https://www.linkedin.com/in/tal-sadot-43425923b/).
+
